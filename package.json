@@ -1,6 +1,6 @@
 {
   "name": "gladys-azure-speech",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Microsoft Azure Speech neural voices for Gladys Assistant: a text-to-speech provider with the key of your own Speech resource.",
   "type": "module",

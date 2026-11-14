@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-14
+
 ### Added
 
 - First version: Microsoft Azure Speech as the text-to-speech provider of
@@ -29,4 +31,5 @@ the notes of the version's GitHub Release.
   tag) and Chinese characters twice; characters XML forbids are removed; a
   choice that is not a string is refused.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-azure-speech/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-azure-speech/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-azure-speech/releases/tag/v0.1.1
