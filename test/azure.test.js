@@ -69,13 +69,13 @@ test('one POST with the key, SSML, the MP3 format and the user agent; the MP3 ba
   t.after(() => srv.close());
   const out = await clientFor(srv).synthesize(request());
   assert.equal(out.audio.toString(), 'ID3-audio');
-  assert.equal(out.characters, null);
+  assert.deepEqual(Object.keys(out), ['audio']);
   const [req] = srv.requests;
   assert.equal(req.method, 'POST');
   assert.equal(req.url, '/cognitiveservices/v1');
   assert.equal(req.body, SSML);
   assert.equal(req.headers['ocp-apim-subscription-key'], KEY);
-  assert.match(req.headers['content-type'], /^application\/ssml\+xml/);
+  assert.equal(req.headers['content-type'], 'application/ssml+xml');
   assert.equal(req.headers['x-microsoft-outputformat'], 'audio-24khz-48kbitrate-mono-mp3');
   assert.equal(req.headers['user-agent'], 'gladys-azure-speech/0.1.0');
   assert.equal(req.headers.authorization, undefined);
@@ -251,4 +251,42 @@ test('classify: unknown codes kept out, not-sent codes recognised', () => {
   assert.equal(aborted.kind, 'timeout');
   assert.equal(classifyStatus(302).kind, 'bad_answer');
   assert.equal(classifyStatus(401).detail, undefined);
+});
+
+test('the body of an error answer is never read: an endless 400 is dropped at once', async (t) => {
+  let closed = false;
+  const srv = await fakeAzureServer((req, body, res) => {
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    const chunk = Buffer.alloc(64 * 1024, 65);
+    const timer = setInterval(() => res.write(chunk), 5);
+    res.on('close', () => {
+      closed = true;
+      clearInterval(timer);
+    });
+  });
+  t.after(() => srv.close());
+  const started = performance.now();
+  const err = await clientFor(srv)
+    .synthesize(request(AbortSignal.timeout(3000)))
+    .catch((e) => e);
+  assert.equal(err.kind, 'invalid');
+  assert.ok(performance.now() - started < 1500);
+  const until = performance.now() + 2000;
+  while (!closed && performance.now() < until) await new Promise((r) => setTimeout(r, 20));
+  assert.ok(closed, 'the server saw the answer dropped');
+});
+
+test('an MP3 under another usual name or with parameters is accepted; HTML is not', async (t) => {
+  let type = 'audio/mp3';
+  const srv = await fakeAzureServer((req, body, res) => {
+    res.writeHead(200, { 'content-type': type });
+    res.end('ID3');
+  });
+  t.after(() => srv.close());
+  const speech = clientFor(srv);
+  for (type of ['audio/mp3', 'Audio/MPEG; codec=mp3', 'audio/mpeg3']) {
+    assert.equal((await speech.synthesize(request())).audio.toString(), 'ID3', type);
+  }
+  type = 'text/html';
+  assert.equal((await speech.synthesize(request()).catch((e) => e)).kind, 'bad_answer');
 });

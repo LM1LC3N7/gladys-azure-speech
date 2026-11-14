@@ -30,9 +30,10 @@ Pour garder la facture sous contrôle :
 
 - **Limite mensuelle** (500 000 caractères par défaut, le palier gratuit) : comptée en mémoire avant le départ de
   chaque requête, et écrite dans `/data` (écriture attendue 1 s au plus) ; une fois atteinte, plus rien n’est
-  envoyé avant le mois civil suivant (UTC) ou une limite plus haute. L’intégration compte les caractères de votre
-  texte ; Azure peut compter un peu autrement (le palier gratuit suit le mois Azure de la ressource) : gardez
-  une marge. Une requête peut-être facturée (pas de réponse, connexion coupée, clip inutilisable) reste comptée ;
+  envoyé avant le mois civil suivant (UTC) ou une limite plus haute. L’intégration compte ce qu’Azure facture : chaque
+  caractère de la requête, balise de débit comprise (environ 32 caractères par annonce quand le débit n’est pas
+  « Normal »), `&`, `<` et `>` sous leur forme d’entité XML (5 ou 4 caractères), et un caractère chinois deux fois.
+  Le palier gratuit suit le mois Azure de la ressource : gardez une marge. Une requête peut-être facturée (pas de réponse, connexion coupée, clip inutilisable) reste comptée ;
   une requête à laquelle Azure a répondu par un code d’erreur ne l’est pas. Une annonce n’est jamais bloquée par
   `/data` (retardée de 3 s au plus) : s’il n’est pas encore lu (2 s au plus), en lecture seule ou lent, la
   requête part quand même et le statut dit « le compteur mensuel n’est pas enregistré : le plafond n’est garanti
@@ -45,6 +46,8 @@ Pour garder la facture sous contrôle :
   d’annonces à la fois »).
 - Aucune nouvelle tentative : une requête en échec n’est pas renvoyée par l’intégration (elle pourrait être
   facturée deux fois).
+- Le palier gratuit n’accepte aussi que 20 requêtes par 60 secondes : au-delà, Azure répond HTTP 429 et
+  l’intégration met toutes les annonces en pause 60 s (plus longtemps si cela continue, voir plus bas).
 - Avec le palier gratuit, Azure s’arrête de lui-même à son quota (l’intégration montre alors l’erreur d’Azure).
   Avec S0, rien ne s’arrête côté Azure : réglez aussi une **alerte de budget** dans Azure Cost Management.
 
@@ -66,7 +69,7 @@ Pour garder la facture sous contrôle :
 | Débit de parole                       | De très lent à très rapide (`prosody` SSML).                                                                                      |
 | Limite mensuelle (caractères)         | De 1 000 à 100 000 000 ; 500 000 par défaut.                                                                                      |
 
-Le bouton **Tester la voix** demande à Azure une courte phrase (environ 50 caractères facturés) avec les
+Le bouton **Tester la voix** demande à Azure une courte phrase (environ 50 caractères facturés, environ 80 avec un débit autre que « Normal ») avec les
 réglages enregistrés et dit combien de temps cela a pris. Rien n’est joué.
 
 ## En cas de problème

@@ -31,6 +31,8 @@ const KEY = /^[A-Za-z0-9]{32,128}$/;
 
 const text = (value) => (typeof value === 'string' ? value.trim() : '');
 const pick = (value, allowed, fallback) => {
+  // A choice that is not a string (a number, an array) is not a choice: refused.
+  if (value !== undefined && value !== null && typeof value !== 'string') return { bad: true };
   const v = text(value);
   if (v === '') return { value: fallback };
   return allowed.includes(v) ? { value: v } : { bad: true };

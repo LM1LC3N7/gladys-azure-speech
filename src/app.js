@@ -64,13 +64,9 @@ function within(promise, ms, timers, fallback) {
   ]).finally(() => timers.clearTimeout(timer));
 }
 
-const escapeXml = (text) =>
-  text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+// Only what XML requires in element content: Azure bills every character of
+// the markup, an `&apos;` would cost 6 instead of 1.
+const escapeXml = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** The SSML Azure needs: the voice, its locale, the rate when it is not the default. */
 export function buildSsml(text, voice, rate) {
@@ -80,16 +76,35 @@ export function buildSsml(text, voice, rate) {
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${locale}"><voice name="${voice}">${said}</voice></speak>`;
 }
 
-/** The text cleaned: control characters become spaces, at most 2,000 characters. */
+/**
+ * The characters Azure bills for a request ("Billable characters", Microsoft
+ * Learn): every code point of the SSML body except the `<speak>` and `<voice>`
+ * tags, markup and entities included, a Han character counted twice.
+ */
+export function billableChars(ssml) {
+  const inner = ssml.replace(/<\/?(?:speak|voice)\b[^>]*>/g, '');
+  let n = 0;
+  for (const ch of inner) n += /\p{Script=Han}/u.test(ch) ? 2 : 1;
+  return n;
+}
+
+/**
+ * The text cleaned: control characters and what XML 1.0 forbids (U+FFFE,
+ * U+FFFF, a lone surrogate, also one left by the cut) become spaces, at most
+ * 2,000 characters.
+ */
 export function cleanText(text) {
   return (
     String(text ?? '')
       // eslint-disable-next-line no-control-regex -- control characters are what it removes
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
       .slice(0, MAX_TEXT)
+      .replace(/[\uFFFE\uFFFF]|[\uD800-\uDFFF]/gu, ' ')
       .trim()
   );
 }
+
+const cacheKey = (voice, rate, text) => sha256(JSON.stringify([voice, rate, text]));
 
 export class AzureSpeechApp {
   constructor({
@@ -271,10 +286,14 @@ export class AzureSpeechApp {
     if (
       usage &&
       typeof usage.month === 'string' &&
-      usage.month === this.usage.month &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(usage.month) &&
+      usage.month >= this.usage.month &&
       isInt(usage.used, 0, 1e12)
     ) {
-      this.usage.used += usage.used;
+      // A later month than the clock says: the clock is behind (no RTC, a VM
+      // restored). That count is kept, never overwritten, and what was sent
+      // since the start is added to it.
+      this.usage = { month: usage.month, used: this.usage.used + usage.used };
     }
     const pause = data?.pause;
     if (pause && Number.isFinite(pause.until)) {
@@ -349,9 +368,10 @@ export class AzureSpeechApp {
     return Math.max(0, this.pauseUntil - this.now());
   }
 
+  /** Only forward: a clock gone back never resets the count of a later month. */
   rollMonth() {
     const month = monthOf(this.wallNow());
-    if (month !== this.usage.month) this.usage = { month, used: 0 };
+    if (month > this.usage.month) this.usage = { month, used: 0 };
   }
 
   /** Throws the reason nothing can be sent now (the order is the status order). */
@@ -443,17 +463,19 @@ export class AzureSpeechApp {
     if (!cfg.ok) throw new Error(t(cfg.reason, lang));
     const text = cleanText(rawText);
     if (!text) throw new Error(t('empty_text', lang));
-    const voice = cfg.voices[languageOf(cfg, language)];
-    const key = sha256(JSON.stringify([voice, cfg.rate, text]));
+    const pick = (c) => c.voices[languageOf(c, language)];
+    const key = cacheKey(pick(cfg), cfg.rate, text);
     const cached = this.cacheGet(key);
     if (cached) return cached;
     // The same text in the same voice already asked (a scene announcing on
     // several speakers at once): one request, its answer or failure shared.
     const inFlight = this.shared.get(key);
     if (inFlight) return inFlight;
-    const job = this.run({ text, voice, lang, deadline }).then(({ audio }) => {
-      this.cachePut(key, audio);
-      return audio;
+    const job = this.run({ text, pick, lang, deadline }).then((done) => {
+      // Kept under the voice and rate really used (the settings may have
+      // changed while it waited in the queue).
+      this.cachePut(cacheKey(done.voice, done.rate, text), done.audio);
+      return done.audio;
     });
     this.shared.set(key, job);
     try {
@@ -476,9 +498,14 @@ export class AzureSpeechApp {
       language === 'de'
         ? t('test_sentence_de')
         : t('test_sentence', language === 'fr' ? 'fr' : 'en');
-    const voice = cfg.voices[language];
     const started = this.now();
-    const { bytes } = await this.run({ text, voice, lang: 'en', deadline, allowRefused: true });
+    const { bytes, voice } = await this.run({
+      text,
+      pick: (c) => c.voices[language],
+      lang: 'en',
+      deadline,
+      allowRefused: true,
+    });
     return both('test_ok', {
       voice,
       size: Math.max(1, Math.round(bytes / 1024)),
@@ -486,16 +513,23 @@ export class AzureSpeechApp {
     });
   }
 
-  /** Gate, queue, gate again, count, send. */
-  async run({ text, voice, lang, deadline, allowRefused = false }) {
-    const chars = text.length;
-    this.gate(this.config, chars, lang, { allowRefused });
+  /**
+   * Gate, queue, gate again, count, send. `pick(cfg)` gives the voice: the
+   * SSML and its billable count are built again from the configuration read
+   * after the queue (the rate or the voice may have changed meanwhile).
+   */
+  async run({ text, pick, lang, deadline, allowRefused = false }) {
+    const before = buildSsml(text, pick(this.config), this.config.rate);
+    this.gate(this.config, billableChars(before), lang, { allowRefused });
     await this.acquire(deadline, lang);
     try {
       if (this.stopped) throw new Error(t('stopped', lang));
       // Things may have changed while waiting: the configuration, a refusal, a pause.
       const cfg = this.config;
       if (!cfg?.ok) throw new Error(t(cfg?.reason ?? 'config_unread', lang));
+      const voice = pick(cfg);
+      const ssml = buildSsml(text, voice, cfg.rate);
+      const chars = billableChars(ssml);
       this.gate(cfg, chars, lang, { allowRefused });
       const left = deadline - this.now();
       if (left <= 0) throw new Error(t('timeout', lang));
@@ -511,12 +545,12 @@ export class AzureSpeechApp {
       const started = this.now();
       let result;
       try {
-        result = await this.send(cfg, { text, voice }, left);
+        result = await this.send(cfg, ssml, left);
       } catch (err) {
         this.failed(err, cfg, chars);
         throw new Error(this.message(err, lang), { cause: err });
       }
-      this.succeededWith(cfg, chars, result.characters);
+      this.succeededWith(cfg);
       const kb = Math.round(result.audio.length / 1024);
       this.logger.info(
         `synthesized ${chars} characters (voice ${voice}, ${kb} KB, ${Math.round(this.now() - started)} ms)`,
@@ -524,6 +558,8 @@ export class AzureSpeechApp {
       return {
         audio: `audio/mpeg;base64,${result.audio.toString('base64')}`,
         bytes: result.audio.length,
+        voice,
+        rate: cfg.rate,
       };
     } finally {
       this.release();
@@ -544,13 +580,13 @@ export class AzureSpeechApp {
     return this.client;
   }
 
-  async send(cfg, { text, voice }, left) {
+  async send(cfg, ssml, left) {
     const controller = new AbortController();
     const timer = this.timers.setTimeout(() => controller.abort(), left);
     this.controllers.add(controller);
     try {
       return await this.clientFor(cfg).synthesize({
-        ssml: buildSsml(text, voice, cfg.rate),
+        ssml,
         signal: controller.signal,
       });
     } finally {
@@ -559,12 +595,7 @@ export class AzureSpeechApp {
     }
   }
 
-  succeededWith(cfg, chars, billed) {
-    // A client that says how many characters were billed corrects the count
-    // (Azure does not: `billed` is null, the text length stays counted).
-    if (Number.isInteger(billed) && billed >= 0 && billed <= MAX_TEXT * 2) {
-      this.usage.used = Math.max(0, this.usage.used - chars + billed);
-    }
+  succeededWith(cfg) {
     this.pauseStep = 0;
     this.pauseUntil = 0;
     this.refused = null;

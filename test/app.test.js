@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import { fp8 } from '../src/app.js';
+import { billableChars, buildSsml, cleanText, fp8 } from '../src/app.js';
 import { SpeechError } from '../src/azure.js';
 import { createMemoryStore } from '../src/store.js';
 import { testClock } from './helpers/clock.js';
@@ -76,8 +76,8 @@ test('the default language and the rate come from the configuration; the text is
   assert.equal(
     azure.calls[0].ssml,
     '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="fr-FR">' +
-      '<voice name="fr-FR-DeniseNeural"><prosody rate="slow">Tom &amp; &quot;Jerry&quot; ' +
-      '&lt;b&gt;&apos;s&lt;/voice&gt;&lt;voice name=&quot;x&quot;&gt;</prosody></voice></speak>',
+      '<voice name="fr-FR-DeniseNeural"><prosody rate="slow">Tom &amp; "Jerry" ' +
+      '&lt;b&gt;\'s&lt;/voice&gt;&lt;voice name="x"&gt;</prosody></voice></speak>',
   );
   // Without a rate, no prosody element.
   const plain = await makeApp();
@@ -128,6 +128,8 @@ test('invalid configuration: nothing sent, the reason in the status, the value n
     [{ speech_key: 'é'.repeat(32) }, 'not valid'],
     [{ ...CONFIG, region: 'westeurope.evil.example' }, 'Unknown Azure region.'],
     [{ ...CONFIG, region: 'mars' }, 'Unknown Azure region.'],
+    [{ ...CONFIG, region: ['westeurope'] }, 'Unknown Azure region.'],
+    [{ ...CONFIG, region: 1 }, 'Unknown Azure region.'],
     [{ ...CONFIG, voice_fr: 'en-US-JennyNeural' }, 'Unknown voice.'],
     [{ ...CONFIG, monthly_character_limit: '12.5' }, 'whole number'],
     [{ ...CONFIG, monthly_character_limit: 999 }, 'whole number'],
@@ -291,9 +293,8 @@ test('the monthly limit: counted before sending, refunded on an answered error, 
   };
   await gladys.fake.ttsSynthesize('x'.repeat(400), 'en');
   assert.equal(seenBefore, 400, 'saved before the request left');
-  // A billed count from the client replaces the estimate (Azure gives none: null).
-  azure.answer = () => ({ audio: MP3, characters: 300 });
-  await gladys.fake.ttsSynthesize('y'.repeat(350), 'en');
+  azure.answer = () => ({ audio: MP3 });
+  await gladys.fake.ttsSynthesize('y'.repeat(300), 'en');
   assert.equal(app.usage.used, 700);
   // A 400 answer is not billed: refunded.
   azure.answer = () => {
@@ -627,6 +628,7 @@ test('each refusal draws a new salt; another month in /data is not counted', asy
   const azure = fakeSpeech(refused);
   const { gladys, app } = await makeApp({ store, azure });
   assert.equal(app.usage.used, 0, 'October does not count in November');
+  assert.deepEqual(store.data.usage, { month: '2026-11', used: 0 }, 'never saved as October');
   await gladys.fake.ttsSynthesize('Hello', 'en');
   const first = store.data.refused.salt;
   await gladys.fake.action('test_voice', {});
@@ -777,4 +779,91 @@ test('a read-only /data is said as soon as the first write fails, before any syn
   const { gladys, azure } = await makeApp({ store });
   assert.equal(azure.calls.length, 0);
   assert.match(lastStatus(gladys)[1], /monthly counter is not saved/);
+});
+
+test('billable characters: markup and entities count, speak and voice tags do not, Han twice', () => {
+  const plain = buildSsml('Porte ouverte', 'fr-FR-DeniseNeural', 'medium');
+  assert.equal(billableChars(plain), 13);
+  // A rate other than normal: the prosody tags are billed (about 32 characters).
+  const slow = buildSsml('Porte ouverte', 'fr-FR-DeniseNeural', 'slow');
+  assert.equal(billableChars(slow), 13 + '<prosody rate="slow">'.length + '</prosody>'.length);
+  // Apostrophes and quotes are left as they are (1 each); &, < and > cost their entity.
+  const quoted = buildSsml(`L'entrée "A" & <B>`, 'fr-FR-DeniseNeural', 'medium');
+  assert.equal(billableChars(quoted), `L'entrée "A" &amp; &lt;B&gt;`.length);
+  // Chinese characters count twice; an astral character is one code point.
+  assert.equal(billableChars(buildSsml('客厅灯已打开', 'en-US-JennyNeural', 'medium')), 12);
+  assert.equal(billableChars(buildSsml('ok 😀', 'en-US-JennyNeural', 'medium')), 4);
+});
+
+test('the limit counts what Azure bills: a slow rate never goes past it', async () => {
+  const store = createMemoryStore();
+  const config = { ...CONFIG, monthly_character_limit: 1000, speaking_rate: 'slow' };
+  const { gladys, azure, app } = await makeApp({ store, config });
+  for (let i = 0; i < 100; i += 1) await gladys.fake.ttsSynthesize(`Porte ouverte ${i}`, 'fr');
+  const billed = azure.calls.reduce((sum, c) => sum + billableChars(c.ssml), 0);
+  assert.equal(app.usage.used, billed);
+  assert.ok(billed <= 1000, `${billed} billed`);
+  assert.ok(azure.calls.length < 25, `${azure.calls.length} requests`);
+  const han = await makeApp({ config: { ...CONFIG, monthly_character_limit: 1000 } });
+  await han.gladys.fake.ttsSynthesize('客厅灯已打开', 'en');
+  assert.equal(han.app.usage.used, 12);
+});
+
+test('a rate changed while a request waits in the queue: counted and sent with the new one', async () => {
+  const releases = [];
+  const azure = fakeSpeech(
+    () => new Promise((resolve) => releases.push(() => resolve({ audio: MP3 }))),
+  );
+  const config = { ...CONFIG, monthly_character_limit: 1000 };
+  const { gladys, app } = await makeApp({ azure, config });
+  const running = [0, 1].map((i) => gladys.fake.ttsSynthesize(`${i}`.repeat(10), 'en'));
+  const waiting = gladys.fake.ttsSynthesize('w'.repeat(10), 'en');
+  await settle();
+  assert.equal(app.usage.used, 20);
+  await gladys.fake.configUpdated({ ...config, speaking_rate: 'x-slow' });
+  releases[0]();
+  await settle();
+  assert.equal(azure.calls.length, 3);
+  assert.equal(azure.calls[2].rate, 'x-slow');
+  assert.equal(app.usage.used, 20 + billableChars(azure.calls[2].ssml));
+  assert.ok(billableChars(azure.calls[2].ssml) > 30);
+  releases[1]();
+  releases[2]();
+  await Promise.all([...running, waiting]);
+  // Cached under the rate really used: asked again at x-slow, not sent again.
+  await gladys.fake.ttsSynthesize('w'.repeat(10), 'en');
+  assert.equal(azure.calls.length, 3);
+});
+
+test('the Test button respects the monthly limit: refused, nothing sent', async () => {
+  const store = createMemoryStore({ usage: { month: '2026-11', used: 990 } });
+  const config = { ...CONFIG, monthly_character_limit: 1000 };
+  const { gladys, azure } = await makeApp({ store, config });
+  const ack = await gladys.fake.action('test_voice', {});
+  assert.equal(ack.success, false);
+  assert.match(JSON.stringify(ack), /monthly limit of 1000 characters is reached/);
+  assert.equal(azure.calls.length, 0);
+});
+
+test('a clock behind at start never overwrites the count of a later month kept in /data', async () => {
+  // 2026-11-30 22:00 UTC, /data already in December (the clock was right before).
+  const clock = testClock({ start: Date.UTC(2026, 10, 30, 22, 0, 0) });
+  const store = createMemoryStore({ usage: { month: '2026-12', used: 480_000 } });
+  const { gladys, app } = await makeApp({ store, clock });
+  assert.deepEqual(store.data.usage, { month: '2026-12', used: 480_000 });
+  await gladys.fake.ttsSynthesize('Hello', 'en');
+  assert.deepEqual(app.usage, { month: '2026-12', used: 480_005 });
+  // Midnight: December at last, the count goes on.
+  await clock.advance(2 * HOUR + SECOND);
+  await gladys.fake.ttsSynthesize('Hello again', 'en');
+  assert.deepEqual(store.data.usage, { month: '2026-12', used: 480_016 });
+  // An older month in /data is still not counted (see the October test).
+});
+
+test('cleanText: what XML 1.0 forbids becomes a space, even a surrogate left by the cut', () => {
+  assert.equal(cleanText('a￾b￿c\uD800d'), 'a b c d');
+  assert.equal(cleanText('ok 😀'), 'ok 😀');
+  const cut = cleanText(`${'x'.repeat(1999)}😀`);
+  assert.equal(cut.length, 1999); // the half pair at 2,000 becomes a space, then trimmed
+  assert.ok(!/[\uD800-\uDFFF]/.test(cut.slice(-1)));
 });

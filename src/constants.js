@@ -139,7 +139,6 @@ export const MAX_TEXT = 2000;
 export const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
 /** Gladys waits 30 s for the ack: the whole answer fits in 25 s, queue included. */
 export const DEADLINE_MS = 25_000;
-export const CONNECT_TIMEOUT_MS = 5_000;
 /** Requests in flight at once; the others wait in a bounded queue. */
 export const MAX_IN_FLIGHT = 2;
 export const MAX_WAITING = 8;

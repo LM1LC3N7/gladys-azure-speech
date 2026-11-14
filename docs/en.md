@@ -30,8 +30,10 @@ To keep the bill under control:
 
 - **Monthly limit** (default 500,000 characters, the free tier): counted in memory before each request leaves,
   and written to `/data` (the write waited for 1 s at most); once reached, nothing more is sent until the next
-  calendar month (UTC) or a higher limit. The integration counts the characters of your text; Azure may count a
-  little differently (the free tier is per Azure month and resource), so keep a margin. A request that may have
+  calendar month (UTC) or a higher limit. The integration counts what Azure bills: every character
+  of the request, the speaking rate tag included (about 32 characters per announcement when the rate is not
+  "Normal"), `&`, `<` and `>` as their XML entity (5 or 4 characters), and a Chinese character twice. The free
+  tier follows the Azure month of the resource, so keep a margin. A request that may have
   been billed (no answer, connection cut, unusable clip) stays counted; a request Azure answered with an error
   status is not. An announcement is never blocked by `/data` (delayed 3 s at most): when it is not read yet
   (2 s at most), read-only or slow, the request leaves all the same and the status says "the monthly counter is
@@ -41,6 +43,8 @@ To keep the bill under control:
   several times at once (a scene announcing on several speakers), it makes one request whose answer all share.
 - At most 2 requests at once and 8 waiting; more at the same moment are refused ("Too many announcements").
 - No retry: a failed request is not sent again by the integration (a retry could be billed twice).
+- The free tier also accepts only 20 requests per 60 seconds: beyond that Azure answers HTTP 429, and the
+  integration pauses every announcement for 60 s (longer if it goes on, see below).
 - With the free tier, Azure stops by itself at its quota (the integration then shows the error Azure answers).
   With S0, nothing stops on the Azure side: set a **budget alert** in Azure Cost Management as well.
 
@@ -62,7 +66,7 @@ To keep the bill under control:
 | Speaking rate                   | Very slow to very fast (SSML `prosody`).                                                                                  |
 | Monthly limit (characters)      | 1,000 to 100,000,000; default 500,000.                                                                                    |
 
-The **Test the voice** button asks Azure for a short sentence (about 50 billed characters) with the saved
+The **Test the voice** button asks Azure for a short sentence (about 50 billed characters, about 80 with a speaking rate other than "Normal") with the saved
 settings and says how long it took. Nothing is played.
 
 ## When something goes wrong

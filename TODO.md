@@ -21,8 +21,15 @@
 - [ ] The voice lists against `GET /cognitiveservices/voices/list` (not called:
       it would be a call at start-up; a voice Azure does not know is refused,
       not billed).
-- [ ] How Azure counts characters against our count (text length; SSML tags
-      are not billed according to the pricing notes).
+- [ ] How Azure counts characters against our count (every code point of
+      the SSML but the `<speak>` and `<voice>` tags, a Han character twice,
+      after "Billable characters"; an entity such as `&amp;` assumed to count
+      its 5 characters).
+- [ ] The `Content-Type` Azure really answers for an MP3 (`audio/mpeg`
+      expected; `audio/mp3`, `audio/mpeg3`, `audio/x-mpeg`, `audio/x-mp3` and
+      parameters are accepted too).
+- [ ] The request `Content-Type` sent exactly as documented
+      (`application/ssml+xml`, no charset): confirm no 415.
 
 ## Later
 
@@ -49,8 +56,12 @@
 - **Cheapest by default**: standard neural voices only (Azure retired its
   non-neural voices; HD voices cost more and are not offered); monthly limit
   500,000 characters by default (the F0 free tier).
-- **The monthly limit is a local guard**: counted before the request leaves
-  (the text length: Azure gives no billed count), refunded when Azure answered
+- **The monthly limit is a local guard**: counted before the request leaves,
+  as Azure bills it (review r1): every character of the SSML sent but the
+  `<speak>` and `<voice>` tags, a Han character twice; computed again from
+  the configuration read after the queue. Only `&`, `<` and `>` are escaped
+  (an `&apos;` would cost 6). A clock behind at start never overwrites a
+  later month kept in `/data`; the month only moves forward. Then refunded when Azure answered
   an error status or the connection never opened, kept on a timeout, a cut
   connection, or a 200 whose clip is unusable (maybe billed).
 - **Only a 401 is a refusal** (Microsoft: key invalid or of another region),

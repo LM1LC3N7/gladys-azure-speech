@@ -868,8 +868,8 @@
         "fr": "Limite mensuelle (caractères)"
       },
       "description": {
-        "en": "Nothing more is sent to Azure once this many characters were sent in the calendar month (UTC). The default, 500,000, is the free tier (F0); on the paid tier (S0), 1,000,000 characters of neural voices cost about 15 USD (see the price page).",
-        "fr": "Plus rien n’est envoyé à Azure une fois ce nombre de caractères envoyé dans le mois civil (UTC). La valeur par défaut, 500 000, est le palier gratuit (F0) ; au palier payant (S0), 1 000 000 de caractères de voix neuronales coûtent environ 15 USD (voir la page des tarifs)."
+        "en": "Nothing more is sent to Azure once this many billable characters were sent in the calendar month (UTC), counted as Azure bills them: the speaking rate tag (about 32 characters per announcement when it is not Normal) and a Chinese character twice. The default, 500,000, is the free tier (F0); on the paid tier (S0), 1,000,000 characters of neural voices cost about 15 USD (see the price page).",
+        "fr": "Plus rien n’est envoyé à Azure une fois ce nombre de caractères facturables envoyé dans le mois civil (UTC), comptés comme Azure les facture : la balise de débit (environ 32 caractères par annonce quand il n’est pas Normal) et un caractère chinois deux fois. La valeur par défaut, 500 000, est le palier gratuit (F0) ; au palier payant (S0), 1 000 000 de caractères de voix neuronales coûtent environ 15 USD (voir la page des tarifs)."
       },
       "required": false,
       "default": 500000,
@@ -885,8 +885,8 @@
         "fr": "Tester la voix"
       },
       "description": {
-        "en": "Asks Azure Speech for a short sentence (about 50 billed characters) with the saved settings and says how it went. Nothing is played.",
-        "fr": "Demande à Azure Speech une courte phrase (environ 50 caractères facturés) avec les réglages enregistrés et dit comment cela s’est passé. Rien n’est joué."
+        "en": "Asks Azure Speech for a short sentence (about 50 billed characters, 80 with a speaking rate) with the saved settings and says how it went. Nothing is played.",
+        "fr": "Demande à Azure Speech une courte phrase (environ 50 caractères facturés, 80 avec un débit) avec les réglages enregistrés et dit comment cela s’est passé. Rien n’est joué."
       },
       "timeout_seconds": 30,
       "fields": [

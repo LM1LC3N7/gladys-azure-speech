@@ -38,6 +38,14 @@ const NOT_SENT = new Set([
   'UND_ERR_CONNECT_TIMEOUT',
 ]);
 
+const MP3_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/mpeg3',
+  'audio/x-mpeg',
+  'audio/x-mp3',
+]);
+
 /** Seconds of a Retry-After header (numbers only), bounded by the caller. */
 function retryAfterOf(headers) {
   const raw = headers?.get?.('retry-after');
@@ -114,8 +122,8 @@ export const endpointOf = (region) =>
   `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
 
 /**
- * One client per (region, key): `synthesize` resolves `{ audio, characters }`
- * (`characters` is null: Azure does not say how many it billed).
+ * One client per (region, key): `synthesize` resolves `{ audio }` (Azure
+ * does not say how many characters it billed: the app counts them).
  * @param {{ region: string, key: string, endpoint?: string, userAgent: string, fetch?: typeof fetch }} options
  */
 export function createSpeech({ region, key, endpoint, userAgent, fetch: fetchImpl = fetch }) {
@@ -129,7 +137,8 @@ export function createSpeech({ region, key, endpoint, userAgent, fetch: fetchImp
           method: 'POST',
           headers: {
             'Ocp-Apim-Subscription-Key': key,
-            'Content-Type': 'application/ssml+xml; charset=utf-8',
+            // The exact value of the documentation (the body is UTF-8).
+            'Content-Type': 'application/ssml+xml',
             'X-Microsoft-OutputFormat': OUTPUT_FORMAT,
             'User-Agent': userAgent,
             Accept: 'audio/mpeg',
@@ -149,7 +158,8 @@ export function createSpeech({ region, key, endpoint, userAgent, fetch: fetchImp
         .split(';')[0]
         .trim()
         .toLowerCase();
-      if (type !== 'audio/mpeg') {
+      // MP3 under its usual names (parameters after `;` ignored).
+      if (!MP3_TYPES.has(type)) {
         res.body?.cancel().catch(() => {});
         throw new SpeechError('bad_answer', { code: 'content_type' });
       }
@@ -160,7 +170,7 @@ export function createSpeech({ region, key, endpoint, userAgent, fetch: fetchImp
       }
       const audio = await readBounded(res.body, MAX_AUDIO_BYTES, signal);
       if (audio.length === 0) throw new SpeechError('bad_answer', { code: 'empty' });
-      return { audio, characters: null };
+      return { audio };
     },
     destroy() {},
   };

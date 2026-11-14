@@ -25,5 +25,8 @@ the notes of the version's GitHub Release.
   or the Test button succeeds; a pause after a throttling or a server error
   (60 s doubled up to 1 h, `Retry-After` up to 6 h), kept across a restart.
 - "Test the voice" button.
+- The monthly limit counts what Azure bills: the SSML markup (speaking rate
+  tag) and Chinese characters twice; characters XML forbids are removed; a
+  choice that is not a string is refused.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-azure-speech/commits/main

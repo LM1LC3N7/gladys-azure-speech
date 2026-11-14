@@ -48,12 +48,6 @@
     "to": "if (true) this.usage.used"
   },
   {
-    "name": "billed count ignored",
-    "file": "src/app.js",
-    "from": "this.usage.used = Math.max(0, this.usage.used - chars + billed);",
-    "to": ""
-  },
-  {
     "name": "clip read without bound",
     "file": "src/azure.js",
     "from": "if (size > max) {",
@@ -134,8 +128,8 @@
   {
     "name": "Test button blocked by a refusal",
     "file": "src/app.js",
-    "from": "lang: 'en', deadline, allowRefused: true",
-    "to": "lang: 'en', deadline, allowRefused: false"
+    "from": "      allowRefused: true,",
+    "to": "      allowRefused: false,"
   },
   {
     "name": "status sent at every call",
@@ -146,8 +140,8 @@
   {
     "name": "cache key without the voice",
     "file": "src/app.js",
-    "from": "JSON.stringify([voice, cfg.rate, text])",
-    "to": "JSON.stringify([cfg.rate, text])"
+    "from": "const cacheKey = (voice, rate, text) => sha256(JSON.stringify([voice, rate, text]));",
+    "to": "const cacheKey = (voice, rate, text) => sha256(JSON.stringify([rate, text]));"
   },
   {
     "name": "cache never expires",
@@ -188,7 +182,7 @@
   {
     "name": "month never rolls",
     "file": "src/app.js",
-    "from": "if (month !== this.usage.month) this.usage = { month, used: 0 };",
+    "from": "if (month > this.usage.month) this.usage = { month, used: 0 };",
     "to": ""
   },
   {
@@ -212,7 +206,7 @@
   {
     "name": "another month counted (R9)",
     "file": "src/app.js",
-    "from": "usage.month === this.usage.month &&",
+    "from": "usage.month >= this.usage.month &&",
     "to": ""
   },
   {
@@ -334,5 +328,77 @@
     "file": "src/config.js",
     "from": "if (region.bad) return",
     "to": "if (false) return"
+  },
+  {
+    "name": "count = text length (R1 B1)",
+    "file": "src/app.js",
+    "from": "const chars = billableChars(ssml);",
+    "to": "const chars = text.length;"
+  },
+  {
+    "name": "Han counted once (R1 B1)",
+    "file": "src/app.js",
+    "from": "n += /\\p{Script=Han}/u.test(ch) ? 2 : 1;",
+    "to": "n += 1;"
+  },
+  {
+    "name": "prosody not counted (R1 B1)",
+    "file": "src/app.js",
+    "from": "const inner = ssml.replace(/<\\/?(?:speak|voice)\\b[^>]*>/g, '');",
+    "to": "const inner = ssml.replace(/<[^>]*>/g, '');"
+  },
+  {
+    "name": "count from the config before the queue (R1 B1)",
+    "file": "src/app.js",
+    "from": "const ssml = buildSsml(text, voice, cfg.rate);",
+    "to": "const ssml = before;"
+  },
+  {
+    "name": "apostrophe escaped (R1 B1)",
+    "file": "src/app.js",
+    "from": ".replace(/>/g, '&gt;');",
+    "to": ".replace(/>/g, '&gt;').replace(/'/g, '&apos;');"
+  },
+  {
+    "name": "Test button past the limit (R1 I1)",
+    "file": "src/app.js",
+    "from": "if (this.usage.used + chars > cfg.monthlyLimit) {",
+    "to": "if (!allowRefused && this.usage.used + chars > cfg.monthlyLimit) {"
+  },
+  {
+    "name": "month rolls backwards (R1 M1)",
+    "file": "src/app.js",
+    "from": "if (month > this.usage.month)",
+    "to": "if (month !== this.usage.month)"
+  },
+  {
+    "name": "later month in /data dropped (R1 M1)",
+    "file": "src/app.js",
+    "from": "usage.month >= this.usage.month &&",
+    "to": "usage.month === this.usage.month &&"
+  },
+  {
+    "name": "XML-forbidden characters kept (R1 M4)",
+    "file": "src/app.js",
+    "from": ".replace(/[\\uFFFE\\uFFFF]|[\\uD800-\\uDFFF]/gu, ' ')",
+    "to": ""
+  },
+  {
+    "name": "error body read (R1 M5)",
+    "file": "src/azure.js",
+    "from": "        res.body?.cancel().catch(() => {});\n        throw classifyStatus(res.status, res.headers);",
+    "to": "        await res.text();\n        throw classifyStatus(res.status, res.headers);"
+  },
+  {
+    "name": "only audio/mpeg accepted (R1 M3)",
+    "file": "src/azure.js",
+    "from": "if (!MP3_TYPES.has(type)) {",
+    "to": "if (type !== 'audio/mpeg') {"
+  },
+  {
+    "name": "non-string choice taken as the default (R1 S6a)",
+    "file": "src/config.js",
+    "from": "if (value !== undefined && value !== null && typeof value !== 'string') return { bad: true };",
+    "to": ""
   }
 ]
