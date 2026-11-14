@@ -50,6 +50,11 @@ const credsOf = (cfg) => cfg.key;
 // region is refused with 401; back to the right region, it is tried again).
 const refusalOf = (cfg) => `${credsOf(cfg)}\n${cfg.region}`;
 const monthOf = (wall) => new Date(wall).toISOString().slice(0, 7);
+/** The month after 'YYYY-MM'. */
+export const nextMonth = (month) => {
+  const [y, m] = month.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+};
 export const fp8 = (salt, cfg) => createHmac('sha256', salt).update(refusalOf(cfg)).digest()[0];
 const isInt = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
 
@@ -291,9 +296,12 @@ export class AzureSpeechApp {
       isInt(usage.used, 0, 1e12)
     ) {
       // A later month than the clock says: the clock is behind (no RTC, a VM
-      // restored). That count is kept, never overwritten, and what was sent
-      // since the start is added to it.
-      this.usage = { month: usage.month, used: this.usage.used + usage.used };
+      // restored), or was ahead when /data was written. The count is never
+      // dropped: the next month is kept as is (the clock is about to reach
+      // it); a month further ahead cannot be trusted, so its count is carried
+      // over onto the current month (no block lasting months).
+      const month = usage.month === nextMonth(this.usage.month) ? usage.month : this.usage.month;
+      this.usage = { month, used: this.usage.used + usage.used };
     }
     const pause = data?.pause;
     if (pause && Number.isFinite(pause.until)) {

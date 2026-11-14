@@ -61,7 +61,9 @@
   `<speak>` and `<voice>` tags, a Han character twice; computed again from
   the configuration read after the queue. Only `&`, `<` and `>` are escaped
   (an `&apos;` would cost 6). A clock behind at start never overwrites a
-  later month kept in `/data`; the month only moves forward. Then refunded when Azure answered
+  later month kept in `/data` (review r2: the next month is kept as is, a
+  month further ahead has its count carried over onto the current month);
+  the month only moves forward. Then refunded when Azure answered
   an error status or the connection never opened, kept on a timeout, a cut
   connection, or a 200 whose clip is unusable (maybe billed).
 - **Only a 401 is a refusal** (Microsoft: key invalid or of another region),

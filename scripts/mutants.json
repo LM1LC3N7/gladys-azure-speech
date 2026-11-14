@@ -400,5 +400,29 @@
     "file": "src/config.js",
     "from": "if (value !== undefined && value !== null && typeof value !== 'string') return { bad: true };",
     "to": ""
+  },
+  {
+    "name": "month far ahead kept (R2 N1)",
+    "file": "src/app.js",
+    "from": "const month = usage.month === nextMonth(this.usage.month) ? usage.month : this.usage.month;",
+    "to": "const month = usage.month;"
+  },
+  {
+    "name": "month format not checked (R2 N1)",
+    "file": "src/app.js",
+    "from": "/^\\d{4}-(0[1-9]|1[0-2])$/.test(usage.month) &&",
+    "to": ""
+  },
+  {
+    "name": "no gate before the queue (R2 N2)",
+    "file": "src/app.js",
+    "from": "    this.gate(this.config, billableChars(before), lang, { allowRefused });\n",
+    "to": ""
+  },
+  {
+    "name": "refund by text length (R2 N3)",
+    "file": "src/app.js",
+    "from": "        this.failed(err, cfg, chars);",
+    "to": "        this.failed(err, cfg, text.length);"
   }
 ]

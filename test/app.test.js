@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
-import { billableChars, buildSsml, cleanText, fp8 } from '../src/app.js';
+import { billableChars, buildSsml, cleanText, fp8, nextMonth } from '../src/app.js';
 import { SpeechError } from '../src/azure.js';
 import { createMemoryStore } from '../src/store.js';
 import { testClock } from './helpers/clock.js';
@@ -866,4 +866,55 @@ test('cleanText: what XML 1.0 forbids becomes a space, even a surrogate left by 
   const cut = cleanText(`${'x'.repeat(1999)}😀`);
   assert.equal(cut.length, 1999); // the half pair at 2,000 becomes a space, then trimmed
   assert.ok(!/[\uD800-\uDFFF]/.test(cut.slice(-1)));
+});
+
+test('a month of /data far ahead or unreadable: never a block for months, never a lost count', async () => {
+  assert.equal(nextMonth('2026-11'), '2026-12');
+  assert.equal(nextMonth('2026-12'), '2027-01');
+  // Far ahead (a clock that was ahead when /data was written): carried over onto now.
+  const far = createMemoryStore({ usage: { month: '9999-12', used: 400 } });
+  const config = { ...CONFIG, monthly_character_limit: 1000 };
+  const a = await makeApp({ store: far, config });
+  assert.deepEqual(far.data.usage, { month: '2026-11', used: 400 });
+  assert.equal((await a.gladys.fake.ttsSynthesize('x'.repeat(500), 'en')).success, true);
+  assert.deepEqual(a.app.usage, { month: '2026-11', used: 900 });
+  assert.match((await a.gladys.fake.ttsSynthesize('y'.repeat(200), 'en')).error, /monthly limit/);
+  // A new month (UTC) starts from zero again, as usual.
+  await a.clock.advance(20 * 24 * HOUR);
+  assert.equal((await a.gladys.fake.ttsSynthesize('y'.repeat(200), 'en')).success, true);
+  assert.deepEqual(far.data.usage, { month: '2026-12', used: 200 });
+  // Unreadable month: not counted, replaced by the current one.
+  const bad = createMemoryStore({ usage: { month: 'zzzz', used: 999 } });
+  const b = await makeApp({ store: bad });
+  assert.deepEqual(bad.data.usage, { month: '2026-11', used: 0 });
+  assert.equal(b.app.usage.used, 0);
+});
+
+test('a request past the limit is refused before the queue, without taking a place in it', async () => {
+  const releases = [];
+  const azure = fakeSpeech(
+    () => new Promise((resolve) => releases.push(() => resolve({ audio: MP3 }))),
+  );
+  const config = { ...CONFIG, monthly_character_limit: 1000 };
+  const { gladys, app } = await makeApp({ azure, config });
+  const running = [0, 1].map((i) => gladys.fake.ttsSynthesize(`${i}`.repeat(100), 'en'));
+  await settle();
+  const over = gladys.fake.ttsSynthesize('z'.repeat(900), 'en');
+  await settle();
+  assert.equal(app.waiting.length, 0, 'never queued');
+  assert.match((await over).error, /monthly limit of 1000 characters is reached/);
+  releases.forEach((r) => r());
+  await Promise.all(running);
+  assert.equal(azure.calls.length, 2);
+});
+
+test('a refund gives back the whole billable count, prosody included', async () => {
+  const azure = fakeSpeech(() => {
+    throw new SpeechError('invalid', { status: 400, code: 'HTTP 400', detail: 'HTTP 400' });
+  });
+  const config = { ...CONFIG, speaking_rate: 'slow' };
+  const { gladys, app } = await makeApp({ azure, config });
+  await gladys.fake.ttsSynthesize('Porte ouverte', 'fr');
+  assert.ok(billableChars(azure.calls[0].ssml) > 13);
+  assert.equal(app.usage.used, 0);
 });
