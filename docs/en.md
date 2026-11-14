@@ -1,61 +1,92 @@
-# Demo Devices Template
+# Azure Speech
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Gives Gladys the neural voices of **Microsoft Azure Speech** for its announcements (the "Play a notification"
+scene action) and the voice assistant reply, with **the key of your own Speech resource**. Unofficial: not
+affiliated with Microsoft.
 
-## What you get
+This integration has never been tested with a real Azure account yet: it was built from the Azure Speech REST
+API documentation and tested against a local imitation of that API.
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+## What it does
+
+Gladys sends a text (2,000 characters at most) and the language of the user. The integration picks the voice
+you chose for that language (French, English or German; the "Language when unknown" voice otherwise), asks
+Azure Speech for an MP3 clip (24 kHz, 48 kbit/s) and hands it to Gladys, which plays it on your speakers.
+
+Then, in Gladys, open **Integrations → Artificial Intelligence**, card **Voice**, and select **Azure Speech**.
+
+Limits of Gladys itself (not of this integration): the clip is served to speakers on your local network, and the
+voice assistant reply stays in text in an HTTPS page (see the Gladys documentation).
+
+## What it costs
+
+Azure Speech is billed per character sent, on your Azure subscription (prices on
+[azure.microsoft.com](https://azure.microsoft.com/pricing/details/cognitive-services/speech-services/), November
+2026): the **free tier (F0)** of a Speech resource gives 500,000 characters of neural voices a month; on the paid
+tier (S0), standard neural voices cost about 15 USD per million characters. Only standard neural voices are
+offered here: the HD voices cost more.
+
+To keep the bill under control:
+
+- **Monthly limit** (default 500,000 characters, the free tier): counted in memory before each request leaves,
+  and written to `/data` (the write waited for 1 s at most); once reached, nothing more is sent until the next
+  calendar month (UTC) or a higher limit. The integration counts the characters of your text; Azure may count a
+  little differently (the free tier is per Azure month and resource), so keep a margin. A request that may have
+  been billed (no answer, connection cut, unusable clip) stays counted; a request Azure answered with an error
+  status is not. An announcement is never blocked by `/data` (delayed 3 s at most): when it is not read yet
+  (2 s at most), read-only or slow, the request leaves all the same and the status says "the monthly counter is
+  not saved: the limit is only guaranteed until the next restart" (the pause and a refusal kept there may be
+  unknown too). A cut of power or a crash at the wrong moment can lose the count of one request.
+- The same text in the same voice is played again from memory (24 hours, 20 clips), not billed twice; asked
+  several times at once (a scene announcing on several speakers), it makes one request whose answer all share.
+- At most 2 requests at once and 8 waiting; more at the same moment are refused ("Too many announcements").
+- No retry: a failed request is not sent again by the integration (a retry could be billed twice).
+- With the free tier, Azure stops by itself at its quota (the integration then shows the error Azure answers).
+  With S0, nothing stops on the Azure side: set a **budget alert** in Azure Cost Management as well.
+
+## Create the Speech resource
+
+1. In the [Azure portal](https://portal.azure.com), **Create a resource → Speech** (or "Speech service").
+2. Choose a region (for example West Europe) and the **Free F0** pricing tier, or Standard S0.
+3. Once created, open **Keys and Endpoint**: copy **KEY 1** (or KEY 2) and note the **Location/Region**
+   (`westeurope`, `francecentral`…).
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+| Field                           | What it does                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Resource key                    | Kept by Gladys in its database, never shown again, sent only to Azure Speech (in the `Ocp-Apim-Subscription-Key` header). |
+| Region of the resource          | The region shown next to the key (default `westeurope`). A key works only in its own region.                              |
+| French / English / German voice | The voice for each language (standard neural voices; "multilingual" ones also read other languages).                      |
+| Language when unknown           | The voice used when Gladys sends no language or another one.                                                              |
+| Speaking rate                   | Very slow to very fast (SSML `prosody`).                                                                                  |
+| Monthly limit (characters)      | 1,000 to 100,000,000; default 500,000.                                                                                    |
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+The **Test the voice** button asks Azure for a short sentence (about 50 billed characters) with the saved
+settings and says how long it took. Nothing is played.
 
-## Actions
+## When something goes wrong
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+The status of the Configuration screen says why:
 
-## Scenes
+- **Azure refused this key** (HTTP 401: wrong or regenerated key, or a key of a resource in another region):
+  nothing more is sent with it in that region, even after a restart (once `/data` is read), until you enter
+  another key, choose another region, or the **Test** button succeeds (it sends anyway). `/data` keeps only 8
+  bits of a salted hash of the refused key and region, never the key: after a restart, another key has 1
+  chance in 256 to look refused; the Test button then clears it.
+- **Azure denied the synthesis** (HTTP 403): for example the quota of the free tier is used up, or the network
+  rules of the resource block the address of Gladys. This is not a refusal of the key: the next announcement
+  tries again.
+- **Slow down / Azure failed** (HTTP 429 or 5xx): no request for 60 s, then 2, 4… minutes up to 1 hour if it
+  goes on (longer when Azure asks for it with `Retry-After`, 6 hours at most); the Test button waits too. The
+  pause is kept in `/data` across a restart; a success ends it.
+- **Azure refused the request** (HTTP 400 or another 4xx): usually a voice the region does not offer; only the
+  status code is shown (the body of the answer could quote your text); nothing is billed.
+- **Could not be reached, or the connection was cut**: a cut after the request left stays counted.
+- **Did not answer in time**: Gladys waits 30 s; the integration gives up at 25 s.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Privacy
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
-
-## Dashboard
-
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
-
-## Troubleshooting
-
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+The text to speak is sent to Microsoft Azure, to the region of your resource. The integration never writes it
+to the logs or to `/data` (only its length); the clips stay in memory only. A redirect from the Azure address
+is never followed, so the key goes nowhere else.

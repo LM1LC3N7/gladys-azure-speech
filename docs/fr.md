@@ -1,67 +1,97 @@
-# Template de démonstration
+# Azure Speech
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Donne à Gladys les voix neuronales de **Microsoft Azure Speech** pour ses annonces (l’action de scène « Jouer
+une notification ») et la réponse de l’assistant vocal, avec **la clé de votre propre ressource Speech**.
+Non officielle : sans lien avec Microsoft.
 
-## Ce que vous obtenez
+Cette intégration n’a encore jamais été testée avec un vrai compte Azure : elle a été écrite d’après la
+documentation de l’API REST d’Azure Speech et testée contre une imitation locale de cette API.
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+## Ce qu’elle fait
+
+Gladys envoie un texte (2 000 caractères au plus) et la langue de l’utilisateur. L’intégration choisit la voix
+que vous avez retenue pour cette langue (français, anglais ou allemand ; sinon la voix « Langue si inconnue »),
+demande à Azure Speech un clip MP3 (24 kHz, 48 kbit/s) et le remet à Gladys, qui le joue sur vos enceintes.
+
+Ensuite, dans Gladys, ouvrez **Intégrations → Intelligence artificielle**, carte **Voix**, et choisissez
+**Azure Speech**.
+
+Limites de Gladys elle-même (pas de cette intégration) : le clip est servi aux enceintes de votre réseau local,
+et la réponse de l’assistant vocal reste en texte dans une page HTTPS (voir la documentation de Gladys).
+
+## Ce que ça coûte
+
+Azure Speech est facturé au caractère envoyé, sur votre abonnement Azure (tarifs sur
+[azure.microsoft.com](https://azure.microsoft.com/pricing/details/cognitive-services/speech-services/), novembre 2026) : le **palier gratuit (F0)** d’une ressource Speech donne 500 000 caractères de voix neuronales par mois ;
+au palier payant (S0), les voix neuronales standard coûtent environ 15 USD le million de caractères. Seules les
+voix neuronales standard sont proposées ici : les voix HD coûtent plus cher.
+
+Pour garder la facture sous contrôle :
+
+- **Limite mensuelle** (500 000 caractères par défaut, le palier gratuit) : comptée en mémoire avant le départ de
+  chaque requête, et écrite dans `/data` (écriture attendue 1 s au plus) ; une fois atteinte, plus rien n’est
+  envoyé avant le mois civil suivant (UTC) ou une limite plus haute. L’intégration compte les caractères de votre
+  texte ; Azure peut compter un peu autrement (le palier gratuit suit le mois Azure de la ressource) : gardez
+  une marge. Une requête peut-être facturée (pas de réponse, connexion coupée, clip inutilisable) reste comptée ;
+  une requête à laquelle Azure a répondu par un code d’erreur ne l’est pas. Une annonce n’est jamais bloquée par
+  `/data` (retardée de 3 s au plus) : s’il n’est pas encore lu (2 s au plus), en lecture seule ou lent, la
+  requête part quand même et le statut dit « le compteur mensuel n’est pas enregistré : le plafond n’est garanti
+  que jusqu’au prochain redémarrage » (la pause et un refus qui y sont gardés peuvent aussi être inconnus). Une
+  coupure de courant ou un plantage au mauvais moment peut perdre le compte d’une requête.
+- Le même texte dans la même voix est rejoué depuis la mémoire (24 heures, 20 clips), sans être facturé deux
+  fois ; demandé plusieurs fois au même moment (une scène qui annonce sur plusieurs enceintes), il ne fait
+  qu’une requête dont tous partagent la réponse.
+- Au plus 2 requêtes à la fois et 8 en attente ; au-delà, au même moment, elles sont refusées (« Trop
+  d’annonces à la fois »).
+- Aucune nouvelle tentative : une requête en échec n’est pas renvoyée par l’intégration (elle pourrait être
+  facturée deux fois).
+- Avec le palier gratuit, Azure s’arrête de lui-même à son quota (l’intégration montre alors l’erreur d’Azure).
+  Avec S0, rien ne s’arrête côté Azure : réglez aussi une **alerte de budget** dans Azure Cost Management.
+
+## Créer la ressource Speech
+
+1. Dans le [portail Azure](https://portal.azure.com), **Créer une ressource → Speech** (ou « Service Speech »).
+2. Choisissez une région (par exemple West Europe) et le niveau tarifaire **Free F0**, ou Standard S0.
+3. Une fois créée, ouvrez **Clés et point de terminaison** : copiez **KEY 1** (ou KEY 2) et notez la
+   **Location/Region** (`westeurope`, `francecentral`…).
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+| Champ                                 | Rôle                                                                                                                              |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Clé de la ressource                   | Gardée par Gladys dans sa base, jamais réaffichée, envoyée seulement à Azure Speech (dans l’en-tête `Ocp-Apim-Subscription-Key`). |
+| Région de la ressource                | La région affichée à côté de la clé (`westeurope` par défaut). Une clé ne marche que dans sa région.                              |
+| Voix française / anglaise / allemande | La voix de chaque langue (voix neuronales standard ; les « multilingues » lisent aussi d’autres langues).                         |
+| Langue si inconnue                    | La voix utilisée quand Gladys n’envoie pas de langue, ou une autre.                                                               |
+| Débit de parole                       | De très lent à très rapide (`prosody` SSML).                                                                                      |
+| Limite mensuelle (caractères)         | De 1 000 à 100 000 000 ; 500 000 par défaut.                                                                                      |
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+Le bouton **Tester la voix** demande à Azure une courte phrase (environ 50 caractères facturés) avec les
+réglages enregistrés et dit combien de temps cela a pris. Rien n’est joué.
 
-## Actions
+## En cas de problème
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+Le statut de l’écran Configuration dit pourquoi :
 
-## Scènes
+- **Azure a refusé cette clé** (HTTP 401 : clé erronée ou régénérée, ou clé d’une ressource d’une autre
+  région) : plus rien n’est envoyé avec elle dans cette région, même après un redémarrage (une fois `/data` lu),
+  tant que vous ne saisissez pas une autre clé, ne choisissez pas une autre région, ou que le bouton **Tester**
+  ne réussit pas (il envoie quand même). `/data` ne garde que 8 bits d’une empreinte salée de la clé et de la
+  région refusées, jamais la clé : après un redémarrage, une autre clé a 1 chance sur 256 de paraître refusée ;
+  le bouton Tester lève alors le doute.
+- **Azure a refusé la synthèse** (HTTP 403) : par exemple le quota du palier gratuit est épuisé, ou les règles
+  réseau de la ressource bloquent l’adresse de Gladys. Ce n’est pas un refus de la clé : l’annonce suivante
+  réessaie.
+- **Ralentir / Azure en échec** (HTTP 429 ou 5xx) : aucune requête pendant 60 s, puis 2, 4… minutes jusqu’à
+  1 heure si cela continue (plus longtemps quand Azure le demande par `Retry-After`, 6 heures au plus) ; le
+  bouton Tester attend aussi. La pause est gardée dans `/data` d’un redémarrage à l’autre ; un succès y met fin.
+- **Azure a refusé la requête** (HTTP 400 ou autre 4xx) : le plus souvent une voix que la région ne propose
+  pas ; seul le code est affiché (le corps de la réponse pourrait citer votre texte) ; rien n’est facturé.
+- **Injoignable, ou connexion coupée** : une coupure après le départ de la requête reste comptée.
+- **Pas de réponse à temps** : Gladys attend 30 s ; l’intégration abandonne à 25 s.
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+## Vie privée
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
-
-## Tableau de bord
-
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
-
-## Dépannage
-
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+Le texte à dire est envoyé à Microsoft Azure, dans la région de votre ressource. L’intégration ne l’écrit
+jamais dans les journaux ni dans `/data` (seulement sa longueur) ; les clips restent en mémoire seulement. Une
+redirection depuis l’adresse d’Azure n’est jamais suivie : la clé ne part nulle part ailleurs.

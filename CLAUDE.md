@@ -5,22 +5,28 @@ contributors.
 
 ## What this is
 
-A Gladys Assistant **external integration**: a Node.js service (Node 22+, ESM,
-no build step) that runs in its own sandboxed Docker container and talks to
-Gladys through
-[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
-its only runtime dependency. It started from the official JavaScript template.
+A Gladys Assistant **external integration** of type `tts` (text-to-speech
+provider, Gladys 5.3.0+): a Node.js service (Node 22+, ESM, no build step) in
+its own sandboxed Docker container, talking to Gladys through
+[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js)
+and to **Microsoft Azure Speech** through its official REST API (Node's
+`fetch`, no other dependency) with the key and region of the user's own
+Speech resource. Gladys
+sends a text (2,000 characters at most) and a language; the integration
+answers an MP3 clip as `audio/mpeg;base64,...` within 25 s (Gladys waits
+30 s). Unofficial: not affiliated with Microsoft.
 
 ## Commands
 
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "limit"   # tests whose name matches
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
+npm run mutants                           # mutation check (scripts/mutants.json), use memcap
 npx github:GladysAssistant/integration-store .   # store admission checks
 ```
 
@@ -31,32 +37,49 @@ pushing.
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
-src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
-gladys-assistant-integration.json manifest: name, config_schema, actions, image...
+index.js                          SDK wiring only: AzureSpeechApp, FileStore, createSpeech
+src/app.js                        AzureSpeechApp: handlers, configuration, voice, SSML, cache,
+                                  monthly limit, queue, pause, refusal, status, Test button
+src/azure.js                      the only network access: one POST, error classes by
+                                  status, bounded read of the clip, no redirect
+src/config.js                     the form, checked (never throws, never shows a bad value)
+src/store.js                      /data/azure-speech.json (count, pause, refusal)
+src/constants.js                  voices, regions, output format, bounds, manifest keys
+src/i18n.js                       runtime texts (en/fr)
+gladys-assistant-integration.json manifest: type tts, config, Test action
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
-.github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
+test/                             node --test: fake Gladys, scripted Azure, virtual clock;
+                                  test/azure.test.js: the real fetch on a local server
+scripts/                          cover.png generator, mutation runner and list
 ```
 
 ## Rules
 
-- **External ids are forever.** Build them with
-  `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
-  platform gives the device (serial, cloud id, MAC), never a label. Gladys keys
-  devices, their history, scenes and dashboards on them: changing one creates a
-  new device and orphans the old one. The same goes for every key users store:
-  manifest `config_schema`, `actions`, widget and scene keys, feature keys.
-- **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume. Never log tokens, passwords or API keys.
+- **The bill is the user's.** Standard neural voices only; never a retry;
+  never a redirect followed; the monthly limit (500,000 by default, the free
+  tier) counted BEFORE a request leaves (refunded only when Azure answered an
+  error status, or the connection never opened); the Test button respects the
+  pause and the limit.
+- **Never the key** in a log, the status, an error, `/data` or a test fixture
+  other than the made-up ones of `test/helpers/app.js`. The body of an Azure
+  error is never read (it may quote the text). The spoken text is never logged
+  nor written to `/data` (only its length).
+- **Only a 401 is a refusal** (key wrong or of another region), tied to the
+  key and the region; a 403 is "denied" (quota, network rules). A refused key
+  is never sent again by itself; a new key or region is always tried.
+- **Throttling or 5xx**: a pause on the monotonic clock (60 s doubled up to
+  1 h, Retry-After up to 6 h), its wall end in `/data`; the wall clock serves
+  only `/data` and the calendar month (UTC) of the limit.
+- **/data unreadable is not empty**: read again every 10 s, one read at a time,
+  never written before it was read; a synthesis waits 2 s for it at most.
+- **Config keys and the action key are forever** (`speech_key`,
+  `region`, `voice_fr|en|de`,
+  `default_language`, `speaking_rate`, `monthly_character_limit`,
+  `test_voice`): users store their values.
+- **The container rootfs is read-only.** Write only under `/data`.
 - **Versions belong to the Release workflow** (Actions → Release). Never edit
   `version` in `package.json` or in the manifest, nor the `docker_image` tag,
-  by hand — except on the README's hand-pushed tag path, which bumps all three
+  by hand — except on the hand-pushed tag path, which bumps all three
   together before tagging. `test/manifest.test.js` checks they agree.
 - **Changelog.** Every user-visible change adds a line under `## [Unreleased]`
   in `CHANGELOG.md` (`### Added`, `Changed`, `Fixed`, `Removed`, `Security`).
@@ -73,4 +96,5 @@ test/                             node --test, against the SDK's fake Gladys (in
 - **User-facing text** is bilingual (English and French): action messages,
   manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+  in English. Tests never touch the network (the SDK tests talk to a local
+  server on 127.0.0.1).
